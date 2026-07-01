@@ -181,6 +181,21 @@ export function createSphere(container, callbacks = {}) {
   }
   scene.add(fieldGroup);
 
+  // ---- North celestial pole (Dec +90°) ------------------------------------
+  // A small grey marker + label at the top of the RA/Dec grid for orientation.
+  {
+    const poleVec = raDecToVec(0, 90, R * 1.01); // RA is arbitrary at the pole
+    const poleDot = new THREE.Mesh(
+      new THREE.SphereGeometry(0.012, 12, 8),
+      new THREE.MeshBasicMaterial({ color: 0x9096a0 })
+    );
+    poleDot.position.copy(poleVec);
+    scene.add(poleDot);
+    const poleLbl = makeLabel("N", "#9aa3b2", 0.027);
+    poleLbl.position.copy(raDecToVec(0, 90, R * 1.09));
+    scene.add(poleLbl);
+  }
+
   // ---- Ecliptic ring (Sun's annual path) ----------------------------------
   // Built from ecliptic-longitude samples supplied by app.js as RA/Dec points.
   let eclipticRing = null;

@@ -42,7 +42,7 @@ export function createSphere(container, callbacks = {}) {
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
   camera.up.set(0, 0, 1);            // north celestial pole (+z) points up
-  camera.position.set(2.9, 1.4, 1.3);
+  camera.position.set(1.9, 2.6, 1.3); // azimuth rotated ~28° so 0h sits further left
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -182,17 +182,10 @@ export function createSphere(container, callbacks = {}) {
   scene.add(fieldGroup);
 
   // ---- North celestial pole (Dec +90°) ------------------------------------
-  // A small grey marker + label at the top of the RA/Dec grid for orientation.
+  // A grey "North" text label at the top of the RA/Dec grid for orientation.
   {
-    const poleVec = raDecToVec(0, 90, R * 1.01); // RA is arbitrary at the pole
-    const poleDot = new THREE.Mesh(
-      new THREE.SphereGeometry(0.012, 12, 8),
-      new THREE.MeshBasicMaterial({ color: 0x9096a0 })
-    );
-    poleDot.position.copy(poleVec);
-    scene.add(poleDot);
-    const poleLbl = makeLabel("N", "#9aa3b2", 0.027);
-    poleLbl.position.copy(raDecToVec(0, 90, R * 1.09));
+    const poleLbl = makeLabel("North", "#9aa3b2", 0.027);
+    poleLbl.position.copy(raDecToVec(0, 90, R * 1.04)); // RA is arbitrary at the pole
     scene.add(poleLbl);
   }
 

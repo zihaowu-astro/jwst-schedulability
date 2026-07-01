@@ -250,3 +250,74 @@ export function visibilityWindows(targetRa, targetDec, startDate, days = 366) {
   if (run) windows.push(run);
   return windows;
 }
+
+// ---------------------------------------------------------------------------
+// Available position angles over the whole span.
+//
+// As the observing date moves through the visibility windows, the nominal
+// V3PA (plus its allowed roll half-width) sweeps out a set of achievable
+// position angles. Because PA is circular, we accumulate a 1-deg coverage map
+// over every observable day and then read off the contiguous arcs. NIRSpec's
+// aperture PA is just the V3PA arcs rigidly shifted by +V3IdlYAngle.
+//
+// Returns { any, full, v3pa: [{min,max}], nirspec: [{min,max}] } with angles in
+// degrees; an arc with min > max (after wrapping) crosses 0°. `full` means the
+// target can be observed at every position angle across the span.
+// ---------------------------------------------------------------------------
+export function availablePA(targetRa, targetDec, startDate, days = 366) {
+  const cov = new Array(360).fill(false);
+  let any = false;
+  const dayMs = 86400000;
+  const t0 = startDate.getTime();
+
+  for (let i = 0; i < days; i++) {
+    const d = new Date(t0 + i * dayMs);
+    const sun = sunPosition(julianDate(d));
+    const rep = v3paReport(targetRa, targetDec, sun);
+    if (!rep.observable) continue;
+    any = true;
+    const lo = Math.round(rep.nominalV3PA - rep.rollHalfWidth);
+    const hi = Math.round(rep.nominalV3PA + rep.rollHalfWidth);
+    for (let k = lo; k <= hi; k++) cov[((k % 360) + 360) % 360] = true;
+  }
+
+  const arcs = coverageToArcs(cov);
+  if (!any) return { any: false, full: false, v3pa: [], nirspec: [] };
+  if (arcs === "full") return { any: true, full: true, v3pa: [], nirspec: [] };
+  const v3pa = arcs.map((a) => ({ min: mod360(a.min), max: mod360(a.max) }));
+  const nirspec = arcs.map((a) => ({
+    min: mod360(a.min + NIRSPEC_V3IDLYANGLE),
+    max: mod360(a.max + NIRSPEC_V3IDLYANGLE),
+  }));
+  return { any: true, full: false, v3pa, nirspec };
+}
+
+// Read contiguous arcs out of a 360-bin boolean coverage map. Returns "full"
+// when every bin is set, [] when none are, else [{min,max}] where max = min +
+// width (not yet wrapped, so a seam-crossing arc stays contiguous). Scanning
+// starts just after a gap so no arc is split across the 359°->0° seam.
+function coverageToArcs(cov) {
+  const n = cov.length;
+  let count = 0;
+  for (const b of cov) if (b) count++;
+  if (count === 0) return [];
+  if (count === n) return "full";
+
+  let gap = 0;
+  while (cov[gap]) gap++; // first uncovered bin
+
+  const arcs = [];
+  let cur = null;
+  for (let step = 1; step <= n; step++) {
+    const idx = (gap + step) % n;
+    if (cov[idx]) {
+      if (!cur) cur = { min: gap + step, len: 1 };
+      else cur.len++;
+    } else if (cur) {
+      arcs.push({ min: cur.min, max: cur.min + cur.len });
+      cur = null;
+    }
+  }
+  if (cur) arcs.push({ min: cur.min, max: cur.min + cur.len });
+  return arcs;
+}

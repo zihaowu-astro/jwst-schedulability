@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JWST Field of Regard — Interactive Sky Visibility</title>
+  <meta name="description" content="Interactive 3D celestial sphere showing what JWST can observe on any date: the 85°–135° solar-elongation field of regard, nominal V3 position angle and roll range, annual visibility windows, and the Continuous Viewing Zones." />
+  <meta name="keywords" content="JWST, field of regard, solar elongation, visibility, position angle, V3PA, continuous viewing zone, James Webb Space Telescope" />
+  <meta name="author" content="Zihao Wu" />
+  <link rel="canonical" href="https://wuzihao.site/jwst-schedulability/" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="JWST Field of Regard" />
+  <meta property="og:description" content="Interactive sphere of what JWST can observe on a given date, with nominal V3 position angle and visibility windows." />
+  <meta property="og:url" content="https://wuzihao.site/jwst-schedulability/" />
+
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- Three.js vendored locally via an ES-module import map (zero-build static
+       site, works offline — no CDN dependency). -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three/three.module.js",
+      "three/addons/": "./vendor/three/addons/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="scene"></div>
+
+  <!-- Fallback notice: ES modules + import maps do not load over file:// -->
+  <div id="boot-msg" hidden>
+    <div class="boot-card">
+      <h2>Run this from a local server</h2>
+      <p>This page loads Three.js as an ES module, which browsers block over
+         <code>file://</code>. Start a server in this folder:</p>
+      <pre>python3 -m http.server 8000</pre>
+      <p>then open <a href="http://localhost:8000/">http://localhost:8000/</a></p>
+      <p class="boot-diag">This tab is currently loaded from:
+         <code id="boot-loc"></code></p>
+    </div>
+  </div>
+  <script>
+    // Show exactly where this tab is loaded from, so file:// vs http is obvious.
+    document.getElementById("boot-loc").textContent = location.href;
+    // Classic (non-module) guard so it runs even if the module never loads.
+    if (location.protocol === "file:") {
+      document.getElementById("boot-msg").hidden = false;
+    } else {
+      // If the module hasn't booted within 6s (e.g. CDN blocked), show a hint.
+      window.__jwstBooted = false;
+      setTimeout(function () {
+        if (!window.__jwstBooted) {
+          var m = document.getElementById("boot-msg");
+          m.querySelector("h2").textContent = "Could not load Three.js";
+          m.querySelector("p").innerHTML =
+            "The 3D library (in <code>vendor/three/</code>) failed to load. " +
+            "Make sure that folder is present next to <code>index.html</code>, then reload.";
+          m.hidden = false;
+        }
+      }, 6000);
+    }
+  </script>
+
+  <aside id="panel">
+    <header>
+      <h1>JWST Field of Regard</h1>
+      <p class="lede">What can JWST observe on a given date?</p>
+      <hr class="rule" />
+    </header>
+
+    <section class="controls-block">
+      <h2>Date</h2>
+      <label class="field">
+        <span>Observing date (UTC)</span>
+        <input id="date-input" type="date" value="2026-01-01" />
+      </label>
+      <label class="field">
+        <span>Date <b id="day-label">Jan 1, 2027</b></span>
+        <input id="day-slider" type="range" min="0" max="608" value="0" />
+      </label>
+    </section>
+
+    <section class="controls-block">
+      <h2>Target lookup</h2>
+      <div class="coord-row">
+        <label class="field">
+          <span>RA (deg)</span>
+          <input id="ra-input" type="number" step="any" placeholder="150.0" />
+        </label>
+        <label class="field">
+          <span>Dec (deg)</span>
+          <input id="dec-input" type="number" step="any" placeholder="2.0" />
+        </label>
+      </div>
+      <div class="btn-row">
+        <button id="lookup-btn" type="button">Pin target</button>
+        <button id="clear-btn" type="button" class="ghost">Clear</button>
+      </div>
+      <p class="hint">Or hover the sphere to preview any point.</p>
+      <div class="btn-row">
+        <button id="fields-btn" type="button" class="ghost">Hide classic fields</button>
+      </div>
+    </section>
+
+    <section class="readout-block">
+      <table><caption id="target-title">Target</caption>
+        <tbody id="target-readout"></tbody>
+      </table>
+      <div id="windows" class="windows"></div>
+    </section>
+
+    <footer>
+      <p>
+        JWST's sunshield restricts the boresight to a solar elongation of
+        <b>85°–135°</b>, so at any instant the observable sky is an annulus
+        centered on the Sun. The nominal (Normal Roll) V3 position angle keeps
+        the Sun in the V1–V3 plane; the allowed roll widens from ±3° near 85° to
+        ±7° near 135°. Constraints follow the
+        <a href="https://jwst-docs.stsci.edu/jppom/special-requirements/aperture-position-angle-special-requirements" target="_blank" rel="noopener">STScI JWST documentation</a>.
+      </p>
+      <p>
+        Sun position uses the low-precision USNO formula (~0.01°). Developed by
+        Zihao Wu (Harvard) with assistance from Claude Code.
+      </p>
+    </footer>
+  </aside>
+
+  <div id="tooltip" hidden></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

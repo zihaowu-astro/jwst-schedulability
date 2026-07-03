@@ -110,6 +110,8 @@ a { color: var(--accent); text-decoration-thickness: 0.5px; }
 .field span b { color: var(--text); font-weight: 600; text-transform: none; letter-spacing: 0; }
 
 input[type="date"], input[type="number"] {
+  width: 100%;
+  min-width: 0;            /* allow shrinking inside the flex coord-row */
   height: 2.4rem;
   background: var(--panel-2);
   border: 1px solid var(--border);
@@ -125,6 +127,11 @@ input:focus {
   box-shadow: 0 0 0 2px rgba(110, 168, 220, 0.18);
 }
 
+/* RA/Dec entry: drop the up/down spinner widget (not needed for coordinates) */
+input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
 input[type="range"] {
   width: 100%;
   accent-color: var(--sun);
@@ -132,7 +139,7 @@ input[type="range"] {
 }
 
 .coord-row { display: flex; gap: 0.7rem; }
-.coord-row .field { flex: 1 1 0; }
+.coord-row .field { flex: 1 1 0; min-width: 0; }
 
 .btn-row { display: flex; gap: 0.6rem; margin-top: 0.2rem; }
 

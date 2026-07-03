@@ -100,9 +100,6 @@
         <button id="clear-btn" type="button" class="ghost">Clear</button>
       </div>
       <p class="hint">Or hover the sphere to preview any point.</p>
-      <div class="btn-row">
-        <button id="fields-btn" type="button" class="ghost">Hide classic fields</button>
-      </div>
     </section>
 
     <section class="readout-block">
@@ -110,6 +107,11 @@
         <tbody id="target-readout"></tbody>
       </table>
       <div id="windows" class="windows"></div>
+      <div class="check-row">
+        <span class="check-title">Show on sphere</span>
+        <label class="check"><input id="fields-check" type="checkbox" checked /><span>Example fields</span></label>
+        <label class="check"><input id="maz-check" type="checkbox" /><span>Meteoroid unsafe zone</span><span class="info" tabindex="0" role="button" aria-label="What is the meteoroid unsafe zone?">i<span class="info-pop">The Micrometeoroid Avoidance Zone is where JWST faces a higher risk of head-on micrometeoroid hits.<br><br>It is a 75° cone around JWST's orbital-motion direction, and a soft constraint: observations in the meteoroid unsafe zone should be minimized and need justification in APT.</span></span></label>
+      </div>
     </section>
 
     <footer>

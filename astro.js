@@ -25,9 +25,29 @@ export const FOR_MAX = 135;
 export const ROLL_AT_MIN = 3;
 export const ROLL_AT_MAX = 7;
 
+// Fuzzy band [degrees] inside each FOR edge where observability is flagged
+// "marginal". We compute elongation from the geocentric Sun, but the real
+// pitch constraint applies at JWST's L2 halo orbit (radius up to ~800,000 km),
+// where the apparent Sun direction can differ from geocentric by up to ~0.3
+// deg — enough to flip in/out for targets grazing the 85/135 limits (i.e.
+// |ecliptic latitude| near 45 or 40 deg). The band is wider than that parallax
+// alone because APT also applies scheduling margins near the edges (comparing
+// against APT for a 135-grazing target showed its unobservable gap extending a
+// few days past the 0.3-deg band). APT/jwst_gtvt are authoritative.
+export const FOR_MARGIN = 0.8;
+
 // Continuous Viewing Zone: |ecliptic latitude| >= this is visible year-round
 // (5 deg cap around each ecliptic pole). See cvzLatitude() derivation below.
 export const CVZ_LAT = 85;
+
+// Micrometeoroid avoidance zone (Cycle 2+): a cone of this half-angle around
+// the ram vector (JWST's orbital-motion direction). Soft constraint — APT only
+// warns (visits >70% in-MAZ need a justification), observing there is not
+// forbidden. Note: JDox pages disagree ("half angle ... 75 deg" vs "cone of
+// diameter 75 degrees"); the half-angle reading is the one consistent with the
+// same page's claim that the MAZ covers the entire leading FOR within 45 deg
+// of the ecliptic (a 37.5 deg half-angle could not).
+export const MAZ_HALF_ANGLE = 75;
 
 // NIRSpec aperture orientation. Its Ideal-frame Y axis is rotated 138.5 deg
 // (counter-clockwise from +V3) relative to the V3 axis (STScI SIAF / NIRSpec
@@ -129,6 +149,15 @@ export function isObservable(elong) {
   return elong >= FOR_MIN && elong <= FOR_MAX;
 }
 
+// Observable, but within FOR_MARGIN of an FOR edge — where this tool's
+// geocentric-Sun approximation can disagree with APT (see FOR_MARGIN above).
+export function isMarginal(elong) {
+  return (
+    isObservable(elong) &&
+    (elong < FOR_MIN + FOR_MARGIN || elong > FOR_MAX - FOR_MARGIN)
+  );
+}
+
 // ---------------------------------------------------------------------------
 // JWST Normal Roll: nominal V3 position angle and allowed roll range.
 //
@@ -170,6 +199,7 @@ export function v3paReport(targetRa, targetDec, sun) {
   return {
     elongation: elong,
     observable,
+    marginal: isMarginal(elong),
     nominalV3PA: nominal,
     rollHalfWidth: half,
     v3paMin: mod360(nominal - half),
@@ -206,6 +236,26 @@ export function eclipticToRaDec(lon, lat, eps) {
   const x = Math.cos(l);
   const ra = Math.atan2(y, x);
   return { ra: mod360(ra * RAD), dec: dec * RAD };
+}
+
+// ---------------------------------------------------------------------------
+// Micrometeoroid avoidance zone.
+//
+// JWST shares Earth's heliocentric orbit at L2, so its velocity points 90 deg
+// west of the Sun along the ecliptic (the "apex of the Earth's way"): ecliptic
+// longitude lambda_sun - 90, latitude 0. That apex sits at solar elongation 90,
+// i.e. inside the FOR band — the MAZ is the orbit-leading part of the annulus.
+// ---------------------------------------------------------------------------
+
+// Ram vector (orbital-motion apex) as {ra, dec} in degrees.
+export function ramDirection(sun, eps) {
+  return eclipticToRaDec(mod360(sun.eclipticLon - 90), 0, eps);
+}
+
+// Is a target inside the micrometeoroid avoidance zone on this date?
+export function inMAZ(targetRa, targetDec, sun, eps) {
+  const ram = ramDirection(sun, eps);
+  return angularSeparation(targetRa, targetDec, ram.ra, ram.dec) <= MAZ_HALF_ANGLE;
 }
 
 // ---------------------------------------------------------------------------

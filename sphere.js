@@ -12,7 +12,7 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { DEG, RAD, FOR_MIN, FOR_MAX } from "./astro.js";
+import { DEG, RAD, FOR_MIN, FOR_MAX, FOR_MARGIN, MAZ_HALF_ANGLE } from "./astro.js";
 
 const R = 1; // celestial-sphere radius
 
@@ -269,12 +269,21 @@ export function createSphere(container, callbacks = {}) {
   // circles of constant solar elongation. We draw each as a circle on the
   // sphere, recomputed whenever the Sun (date) moves.
   let sunDir = new THREE.Vector3(1, 0, 0);
+  let ramDir = null; // orbital-motion apex (unit vector); null until first setSun
+  let mazVisible = false; // meteoroid-zone overlay is opt-in
   let forGroup = null;
   const FOR_LINE_MAT = new THREE.LineBasicMaterial({ color: 0x1f8a5b }); // observable-edge green
   const FOR_FILL_MAT = new THREE.MeshBasicMaterial({
     color: 0x37b07a, transparent: true, opacity: 0.18,
     side: THREE.DoubleSide, depthWrite: false,
   }); // shaded observable band
+  const MAZ_FILL_MAT = new THREE.MeshBasicMaterial({
+    color: 0xe0762e, transparent: true, opacity: 0.24,
+    side: THREE.DoubleSide, depthWrite: false,
+  }); // micrometeoroid zone: leading part of the band, drawn instead of green
+  const MAZ_LINE_MAT = new THREE.LineDashedMaterial({
+    color: 0xc25c2e, dashSize: 0.02, gapSize: 0.015,
+  }); // dashed MAZ boundary (soft constraint, hence dashed)
 
   // Orthonormal basis (u, w) perpendicular to a unit axis.
   function perpBasis(axis) {
@@ -299,18 +308,22 @@ export function createSphere(container, callbacks = {}) {
     return new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), FOR_LINE_MAT);
   }
 
-  // Filled band (annulus lying ON the sphere) between two elongations — the
-  // shaded FOR. Subdivided radially (across the band) as well as around, so the
-  // surface hugs the sphere instead of forming a cone/funnel through it.
-  function elongationBand(axis, u, w, e1Deg, e2Deg) {
+  // Filled band patch (annulus segment lying ON the sphere) between two
+  // elongations. `azRange(e)` gives the [start, end] azimuth (rad) of the patch
+  // at each elongation row, so callers can draw the full annulus or the
+  // MAZ / non-MAZ split. Subdivided radially (across the band) as well as
+  // around, so the surface hugs the sphere instead of forming a cone/funnel
+  // through it.
+  function bandPatch(axis, u, w, e1Deg, e2Deg, azRange, mat) {
     const e1 = e1Deg * DEG, e2 = e2Deg * DEG;
     const N = 180, M = 24, rad = R * 1.004; // N around, M across the band
     const stride = N + 1;
     const pos = [], idx = [];
     for (let j = 0; j <= M; j++) {
       const e = e1 + (e2 - e1) * (j / M);
+      const [a0, a1] = azRange(e);
       for (let i = 0; i <= N; i++) {
-        const d = elongDir(axis, u, w, e, (i / N) * Math.PI * 2, rad);
+        const d = elongDir(axis, u, w, e, a0 + (a1 - a0) * (i / N), rad);
         pos.push(d.x, d.y, d.z);
       }
     }
@@ -323,7 +336,31 @@ export function createSphere(container, callbacks = {}) {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
     g.setIndex(idx);
-    return new THREE.Mesh(g, FOR_FILL_MAT);
+    return new THREE.Mesh(g, mat);
+  }
+
+  // Half-width [rad] of the MAZ azimuth arc at elongation e (rad). The MAZ is
+  // a cone of MAZ_HALF_ANGLE around the ram direction, which lies at 90° from
+  // the Sun: cos(sep) = sin(e)·cos(phi)  =>  phi_max = acos(cos(MAZ)/sin e).
+  function mazPhiMax(e) {
+    const x = Math.cos(MAZ_HALF_ANGLE * DEG) / Math.sin(e);
+    if (x >= 1) return 0;            // ring misses the cone entirely
+    if (x <= -1) return Math.PI;     // ring fully inside the cone
+    return Math.acos(x);
+  }
+
+  // One dashed MAZ boundary curve (sign = +1 or -1 side of the ram azimuth),
+  // running across the band from the 85° edge to the 135° edge.
+  function mazEdge(axis, u, w, sign, ramAz) {
+    const pts = [];
+    const K = 48;
+    for (let j = 0; j <= K; j++) {
+      const e = (FOR_MIN + (FOR_MAX - FOR_MIN) * (j / K)) * DEG;
+      pts.push(elongDir(axis, u, w, e, ramAz + sign * mazPhiMax(e), R * 1.007));
+    }
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), MAZ_LINE_MAT);
+    line.computeLineDistances(); // required for dashed materials
+    return line;
   }
 
   function drawFOR() {
@@ -334,39 +371,65 @@ export function createSphere(container, callbacks = {}) {
     forGroup = new THREE.Group();
     const axis = sunDir.clone().normalize();
     const { u, w } = perpBasis(axis);
-    forGroup.add(elongationBand(axis, u, w, FOR_MIN, FOR_MAX)); // shaded band
-    forGroup.add(elongationCircle(axis, u, w, FOR_MIN));        // inner edge (85°)
-    forGroup.add(elongationCircle(axis, u, w, FOR_MAX));        // outer edge (135°)
+    const TAU = Math.PI * 2;
+    if (ramDir && mazVisible) {
+      // Split the band into complementary patches — orange inside the MAZ,
+      // green outside — so the colours stay pure instead of blending.
+      const ramAz = Math.atan2(ramDir.dot(w), ramDir.dot(u));
+      forGroup.add(bandPatch(axis, u, w, FOR_MIN, FOR_MAX, (e) => {
+        const phi = mazPhiMax(e);
+        return [ramAz - phi, ramAz + phi];
+      }, MAZ_FILL_MAT));
+      forGroup.add(bandPatch(axis, u, w, FOR_MIN, FOR_MAX, (e) => {
+        const phi = mazPhiMax(e);
+        return [ramAz + phi, ramAz + TAU - phi];
+      }, FOR_FILL_MAT));
+      forGroup.add(mazEdge(axis, u, w, +1, ramAz)); // dashed MAZ boundaries
+      forGroup.add(mazEdge(axis, u, w, -1, ramAz));
+    } else {
+      forGroup.add(bandPatch(axis, u, w, FOR_MIN, FOR_MAX, () => [0, TAU], FOR_FILL_MAT));
+    }
+    forGroup.add(elongationCircle(axis, u, w, FOR_MIN)); // inner edge (85°)
+    forGroup.add(elongationCircle(axis, u, w, FOR_MAX)); // outer edge (135°)
     scene.add(forGroup);
   }
 
   // Recolour the classic fields: green if inside the FOR (observable now),
-  // grey otherwise. Uses the same dot-product test as the FOR band.
+  // amber if within FOR_MARGIN of an edge (marginal — geocentric-Sun
+  // approximation; check APT), grey otherwise. Same dot-product test as the
+  // FOR band.
   const C_FIELD_ON = new THREE.Color(0x0f9d58);    // observable (green)
+  const C_FIELD_WARN = new THREE.Color(0xe2b93b);  // marginal (matches --warn text)
   const C_FIELD_OFF = new THREE.Color(0x9096a0);   // dot: not observable (grey)
   const C_FIELD_LBL_OFF = new THREE.Color(0x5a6270); // label: not observable (grey)
   function updateFieldColors() {
     const cosMin = Math.cos(FOR_MAX * DEG); // 135° edge
     const cosMax = Math.cos(FOR_MIN * DEG); // 85° edge
+    const cosMinSafe = Math.cos((FOR_MAX - FOR_MARGIN) * DEG);
+    const cosMaxSafe = Math.cos((FOR_MIN + FOR_MARGIN) * DEG);
     for (const f of fieldDots) {
       const cosE = f.dir.dot(sunDir);
       const obs = cosE <= cosMax && cosE >= cosMin;
-      f.mesh.material.color.copy(obs ? C_FIELD_ON : C_FIELD_OFF);
-      f.label.material.color.copy(obs ? C_FIELD_ON : C_FIELD_LBL_OFF);
+      const marginal = obs && (cosE > cosMaxSafe || cosE < cosMinSafe);
+      const c = obs ? (marginal ? C_FIELD_WARN : C_FIELD_ON) : C_FIELD_OFF;
+      f.mesh.material.color.copy(c);
+      f.label.material.color.copy(obs ? c : C_FIELD_LBL_OFF);
     }
   }
 
   // ---- Public updates ------------------------------------------------------
-  function setSun(ra, dec) {
+  function setSun(ra, dec, ram) {
     sunMarker.position.copy(raDecToVec(ra, dec, R * 1.01));
     sunDir = raDecToVec(ra, dec).normalize();
+    ramDir = ram ? raDecToVec(ram.ra, ram.dec).normalize() : null;
     drawFOR();
     updateFieldColors();
   }
-  function setTarget(ra, dec, observable = true) {
+  function setTarget(ra, dec, observable = true, marginal = false) {
     if (ra == null) { targetMarker.visible = false; return; }
     targetMarker.position.copy(raDecToVec(ra, dec, R * 1.01));
-    targetMarker.material.color.set(observable ? 0x0f9d58 : 0xd42a1f); // green if observable, else red
+    // Green if observable, amber if marginal (near an FOR edge), else red.
+    targetMarker.material.color.set(observable ? (marginal ? 0xe2b93b : 0x0f9d58) : 0xd42a1f);
     targetMarker.visible = true;
   }
 
@@ -531,6 +594,7 @@ export function createSphere(container, callbacks = {}) {
   return {
     setSun, setTarget, setEcliptic, setCVZ,
     setFieldsVisible: (v) => { fieldGroup.visible = v; },
+    setMAZVisible: (v) => { mazVisible = v; drawFOR(); },
     getHover: () => lastHover,
   };
 }

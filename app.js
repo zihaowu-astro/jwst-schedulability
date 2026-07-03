@@ -9,6 +9,7 @@
 import {
   julianDate, sunPosition, obliquity,
   eclipticToRaDec, v3paReport, inCVZ, visibilityWindows, availablePA,
+  ramDirection, inMAZ,
   mod360,
 } from "./astro.js";
 import { createSphere } from "./sphere.js";
@@ -39,7 +40,8 @@ const el = {
   decInput: document.getElementById("dec-input"),
   lookupBtn: document.getElementById("lookup-btn"),
   clearBtn: document.getElementById("clear-btn"),
-  fieldsBtn: document.getElementById("fields-btn"),
+  fieldsCheck: document.getElementById("fields-check"),
+  mazCheck: document.getElementById("maz-check"),
   targetReadout: document.getElementById("target-readout"),
   targetTitle: document.getElementById("target-title"),
   windows: document.getElementById("windows"),
@@ -155,7 +157,7 @@ function updateTargetMarker() {
   if (!state.target) { scene.setTarget(null); return; }
   const sun = sunPosition(julianDate(state.date));
   const rep = v3paReport(state.target.ra, state.target.dec, sun);
-  scene.setTarget(state.target.ra, state.target.dec, rep.observable);
+  scene.setTarget(state.target.ra, state.target.dec, rep.observable, rep.marginal);
 }
 
 function onHover(rd, ev, field) {
@@ -166,16 +168,20 @@ function onHover(rd, ev, field) {
   }
   // Floating tooltip near the cursor with the essentials.
   if (rd) {
-    const sun = sunPosition(julianDate(state.date));
+    const jd = julianDate(state.date);
+    const sun = sunPosition(jd);
     // Over a classic field, describe that field (using its own coordinates);
     // otherwise report the cursor point.
     const p = field || rd;
     const rep = v3paReport(p.ra, p.dec, sun);
+    const maz = rep.observable && inMAZ(p.ra, p.dec, sun, obliquity(jd));
     el.tooltip.hidden = false;
     el.tooltip.style.left = `${ev.clientX + 14}px`;
     el.tooltip.style.top = `${ev.clientY + 14}px`;
     const obs = rep.observable
-      ? `V3PA ${fmt(rep.nominalV3PA, 1)}°`
+      ? `V3PA ${fmt(rep.nominalV3PA, 1)}°` +
+        (rep.marginal ? ` · <span class="warn">marginal</span>` : "") +
+        (maz ? ` · <span class="maz">MAZ</span>` : "")
       : `<span class="bad">not observable</span>`;
     if (field) {
       // Over a classic field: show its text, its own RA/Dec, then elong + V3PA.
@@ -211,13 +217,23 @@ function renderTargetReadout() {
   const sun = sunPosition(jd);
   const rep = v3paReport(t.ra, t.dec, sun);
   const cvz = inCVZ(t.ra, t.dec, jd);
+  const maz = rep.observable && inMAZ(t.ra, t.dec, sun, obliquity(jd));
 
   el.targetTitle.textContent = state.target
     ? `Target (pinned)`
     : `Target (hover)`;
 
   let obsCell = rep.observable
-    ? `<span class="good">Yes</span>`
+    ? rep.marginal
+      ? `<span class="warn">Marginal</span>` +
+        `<span class="info" tabindex="0" role="button" aria-label="Why marginal?">i` +
+        `<span class="info-pop">` +
+        `Whether this is really observable depends on JWST's exact position in its L2 orbit.<br><br>` +
+        `This tool computes from Earth's orbit instead, which can be off by a few degrees — ` +
+        `so this close to the edge, the result isn't reliable.<br><br>` +
+        `Please check APT for accurate info.` +
+        `</span></span>`
+      : `<span class="good">Yes</span>`
     : `<span class="bad">No</span>`;
   if (cvz) obsCell += ` <span class="unit">· CVZ (year-round)</span>`;
 
@@ -226,6 +242,17 @@ function renderTargetReadout() {
     row("Dec", `${fmt(t.dec, 3)}°`) +
     row("Solar elongation", `${fmt(rep.elongation, 2)}°`) +
     row("Observable now", obsCell) +
+    row("Meteoroid", rep.observable
+      ? (maz
+          ? `<span class="maz">Unsafe Zone</span>`
+          : `<span class="good">Safe Zone</span>`) +
+        `<span class="info" tabindex="0" role="button" aria-label="What is the meteoroid unsafe zone?">i` +
+        `<span class="info-pop">The Micrometeoroid Avoidance Zone is where JWST ` +
+        `faces a higher risk of head-on micrometeoroid hits.<br><br>` +
+        `It is a 75° cone around JWST's orbital-motion direction, and a soft ` +
+        `constraint: observations in the meteoroid unsafe zone should be ` +
+        `minimized and need justification in APT.</span></span>`
+      : DASH) +
     row("Nominal V3PA", rep.observable ? `${fmt(rep.nominalV3PA, 2)}°` : DASH) +
     row("Allowed roll", rep.observable ? `±${fmt(rep.rollHalfWidth, 1)}°` : DASH) +
     row("V3PA range", rep.observable
@@ -241,7 +268,8 @@ function renderTargetReadout() {
 
 function renderWindows(t) {
   const wins = visibilityWindows(t.ra, t.dec, YEAR_START, DAY_SPAN + 1);
-  const bar = buildVisibilityBar(wins);
+  const chart = buildPAChart(t); // built first: the bar reuses its per-day samples
+  const bar = buildVisibilityBar(wins, chart.samples);
   const rows = wins.length
     ? wins
         .map((w) => {
@@ -251,7 +279,6 @@ function renderWindows(t) {
         })
         .join("")
     : `<div class="win-none">No observable dates in this span.</div>`;
-  const chart = buildPAChart(t);
   el.windows.innerHTML =
     `<div class="win-title">Visibility windows (2027–2028)</div>${bar}` +
     chart.html +
@@ -266,9 +293,10 @@ function fmtWinDate(d) {
 }
 
 // A horizontal timeline of the whole span: grey = not observable, green =
-// observable. Window edges are ticked; a marker shows the current date. Hover
-// is wired up separately (attachBarHover) so it can read per-day PA on the fly.
-function buildVisibilityBar(wins) {
+// observable, amber = marginal (within FOR_MARGIN of an FOR edge). Window edges
+// are ticked; a marker shows the current date. Hover is wired up separately
+// (attachBarHover) so it can read per-day PA on the fly.
+function buildVisibilityBar(wins, samples) {
   const pct = (dayOff) => (Math.max(0, Math.min(DAY_SPAN, dayOff)) / DAY_SPAN) * 100;
   let segs = "";
   let ticks = "";
@@ -281,6 +309,20 @@ function buildVisibilityBar(wins) {
     ticks += `<div class="win-tick" style="left:${pct(a)}%"></div>`;
     ticks += `<div class="win-tick" style="left:${pct(b + 1)}%"></div>`;
   }
+  // Overlays on the green segments, as contiguous runs: meteoroid-unsafe days
+  // get a striped shading over the green; marginal days are treated as
+  // unavailable and painted the bar's grey (drawn last, so they win).
+  const overlayRuns = (key, cls) => {
+    for (let i = 0; i <= DAY_SPAN; ) {
+      if (!samples[i] || !samples[i][key]) { i++; continue; }
+      let j = i;
+      while (j + 1 <= DAY_SPAN && samples[j + 1] && samples[j + 1][key]) j++;
+      segs += `<div class="win-seg ${cls}" style="left:${pct(i)}%;width:${((j - i + 1) / DAY_SPAN) * 100}%"></div>`;
+      i = j + 1;
+    }
+  };
+  overlayRuns("maz", "maz");
+  overlayRuns("marginal", "marginal");
   const yr2 = pct(dayOfYear(new Date(Date.UTC(2028, 0, 1))));
   const now = pct(dayOfYear(state.date));
   return (
@@ -305,7 +347,10 @@ function attachBarHover(t) {
     if (guide) { guide.style.left = `${frac * 100}%`; guide.style.display = "block"; }
     const day = Math.round(frac * DAY_SPAN);
     const d = new Date(YEAR_START.getTime() + day * 86400000);
-    const rep = v3paReport(t.ra, t.dec, sunPosition(julianDate(d)));
+    const jd = julianDate(d);
+    const sun = sunPosition(jd);
+    const rep = v3paReport(t.ra, t.dec, sun);
+    const maz = rep.observable && inMAZ(t.ra, t.dec, sun, obliquity(jd));
     el.tooltip.hidden = false;
     el.tooltip.style.left = `${ev.clientX + 14}px`;
     el.tooltip.style.top = `${ev.clientY + 14}px`;
@@ -313,7 +358,9 @@ function attachBarHover(t) {
       `<b>${fmtWinDate(d)}</b><br>` +
       (rep.observable
         ? `V3PA ${fmt(rep.v3paMin, 0)}°–${fmt(rep.v3paMax, 0)}°<br>` +
-          `<span class="unit">NIRSpec APA ${fmt(rep.nirspecPAMin, 0)}°–${fmt(rep.nirspecPAMax, 0)}°</span>`
+          `<span class="unit">NIRSpec APA ${fmt(rep.nirspecPAMin, 0)}°–${fmt(rep.nirspecPAMax, 0)}°</span>` +
+          (rep.marginal ? `<br><span class="warn">marginal — check APT</span>` : "") +
+          (maz ? `<br><span class="maz">meteoroid unsafe zone</span>` : "")
         : `<span class="bad">not observable</span>`);
   });
   bar.addEventListener("mouseleave", () => {
@@ -340,21 +387,34 @@ function buildPAChart(t) {
   const samples = new Array(DAY_SPAN + 1);
   for (let i = 0; i <= DAY_SPAN; i++) {
     const d = new Date(YEAR_START.getTime() + i * 86400000);
-    const rep = v3paReport(t.ra, t.dec, sunPosition(julianDate(d)));
+    const jd = julianDate(d);
+    const sun = sunPosition(jd);
+    const rep = v3paReport(t.ra, t.dec, sun);
     samples[i] = rep.observable
-      ? { v3: rep.nominalV3PA, apa: rep.nirspecAperturePA }
+      ? {
+          v3: rep.nominalV3PA,
+          apa: rep.nirspecAperturePA,
+          marginal: rep.marginal,
+          maz: inMAZ(t.ra, t.dec, sun, obliquity(jd)),
+        }
       : null;
   }
 
-  const path = (key) => {
-    let d = "", prev = null;
-    for (let i = 0; i <= DAY_SPAN; i++) {
-      const s = samples[i];
-      if (!s) { prev = null; continue; }
-      const v = s[key];
-      const cmd = prev === null || Math.abs(v - prev) > 180 ? "M" : "L";
-      d += `${cmd}${px(i).toFixed(1)} ${py(v).toFixed(1)}`;
-      prev = v;
+  // Split each series into three subpath sets: solid (plain observable),
+  // dashed (meteoroid unsafe zone), grey (marginal — treated as unavailable).
+  // A day-to-day segment takes the "worst" class of its two endpoints.
+  const paths = (key) => {
+    const d = { norm: "", maz: "", marg: "" };
+    const last = { norm: -1, maz: -1, marg: -1 }; // day index last emitted per class
+    const pt = (i, v) => `${px(i).toFixed(1)} ${py(v).toFixed(1)}`;
+    for (let i = 1; i <= DAY_SPAN; i++) {
+      const a = samples[i - 1], b = samples[i];
+      if (!a || !b) continue;
+      const v0 = a[key], v1 = b[key];
+      if (Math.abs(v1 - v0) > 180) continue; // wrap across 0/360
+      const cls = a.marginal || b.marginal ? "marg" : a.maz || b.maz ? "maz" : "norm";
+      d[cls] += (last[cls] === i - 1 ? "" : `M${pt(i - 1, v0)}`) + `L${pt(i, v1)}`;
+      last[cls] = i;
     }
     return d;
   };
@@ -381,13 +441,18 @@ function buildPAChart(t) {
   const nowX = px(Math.max(0, Math.min(DAY_SPAN, dayOfYear(state.date)))).toFixed(1);
   grid += `<line class="pac-now" x1="${nowX}" y1="${y0}" x2="${nowX}" y2="${y1}"/>`;
 
+  const pv3 = paths("v3"), papa = paths("apa");
   const html =
     `<div class="pac-legend"><span class="pac-key pac-key-v3">V3PA</span>` +
     `<span class="pac-key pac-key-apa">NIRSpec APA</span></div>` +
     `<svg class="pa-chart" viewBox="0 0 ${PAC.W} ${PAC.H}" preserveAspectRatio="xMidYMid meet">` +
     grid +
-    `<path class="pac-v3" d="${path("v3")}"/>` +
-    `<path class="pac-apa" d="${path("apa")}"/>` +
+    `<path class="pac-marg" d="${pv3.marg}"/>` +
+    `<path class="pac-marg" d="${papa.marg}"/>` +
+    `<path class="pac-v3" d="${pv3.norm}"/>` +
+    `<path class="pac-v3 pac-maz" d="${pv3.maz}"/>` +
+    `<path class="pac-apa" d="${papa.norm}"/>` +
+    `<path class="pac-apa pac-maz" d="${papa.maz}"/>` +
     `<line id="pac-vline" class="pac-vline" y1="${y0}" y2="${y1}" style="display:none"/>` +
     `<circle id="pac-dot-v3" class="pac-dot pac-dot-v3" r="2.6" style="display:none"/>` +
     `<circle id="pac-dot-apa" class="pac-dot pac-dot-apa" r="2.6" style="display:none"/>` +
@@ -425,7 +490,9 @@ function attachChartHover(chart, t) {
       el.tooltip.innerHTML =
         `<b>${fmtWinDate(d)}</b><br>` +
         `V3PA ${fmt(s.v3, 0)}°<br>` +
-        `<span class="unit">NIRSpec APA ${fmt(s.apa, 0)}°</span>`;
+        `<span class="unit">NIRSpec APA ${fmt(s.apa, 0)}°</span>` +
+        (s.marginal ? `<br><span class="warn">marginal — check APT</span>` : "") +
+        (s.maz ? `<br><span class="maz">meteoroid unsafe zone</span>` : "");
     } else {
       dV3.style.display = "none"; dApa.style.display = "none";
       el.tooltip.innerHTML = `<b>${fmtWinDate(d)}</b><br><span class="bad">not observable</span>`;
@@ -475,7 +542,7 @@ function render() {
   scene.setEcliptic(buildEclipticSamples(jd));
   const poles = cvzPoles(jd);
   scene.setCVZ(poles.north, poles.south);
-  scene.setSun(sun.ra, sun.dec);
+  scene.setSun(sun.ra, sun.dec, ramDirection(sun, obliquity(jd)));
   updateTargetMarker();
   renderTargetReadout();
 }
@@ -509,12 +576,14 @@ el.lookupBtn.addEventListener("click", () => {
 
 el.clearBtn.addEventListener("click", clearTarget);
 
-// Toggle the classic-field markers on/off.
-let fieldsVisible = true;
-el.fieldsBtn.addEventListener("click", () => {
-  fieldsVisible = !fieldsVisible;
-  scene.setFieldsVisible(fieldsVisible);
-  el.fieldsBtn.textContent = fieldsVisible ? "Hide classic fields" : "Show classic fields";
+// Toggle the classic-field markers on/off (checked = shown, on by default).
+el.fieldsCheck.addEventListener("change", () => {
+  scene.setFieldsVisible(el.fieldsCheck.checked);
+});
+
+// Toggle the meteoroid-zone overlay on the sphere (unchecked = off by default).
+el.mazCheck.addEventListener("change", () => {
+  scene.setMAZVisible(el.mazCheck.checked);
 });
 
 // Hide the tooltip when the pointer leaves the canvas.

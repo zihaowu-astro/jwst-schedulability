@@ -8,6 +8,8 @@
   --accent-deep: #1f4e79;   /* cosmo-calc academic blue */
   --marker: #d9705f;        /* brick red, brightened for dark bg */
   --good: #6bd39a;
+  --warn: #e2b93b;          /* marginal: near an FOR edge, check APT */
+  --maz: #e08a52;           /* micrometeoroid avoidance zone (soft constraint) */
   --bad: #e08a7d;
   --sun: #ffd45e;
   --border: #2a2f3a;
@@ -134,6 +136,39 @@ input[type="range"] {
 
 .btn-row { display: flex; gap: 0.6rem; margin-top: 0.2rem; }
 
+/* ---- Toggle checkboxes (classic fields / meteoroid zone) ------------- */
+.check-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1.1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+.check-title {
+  font-size: 0.74rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.check input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+/* Push the checkbox's info button to the far right so its popover, which
+   opens leftward, stays inside the panel. */
+.check .info { margin-left: auto; }
+
 button {
   height: 2.4rem;
   background: var(--accent-deep);
@@ -196,7 +231,56 @@ td.value { text-align: right; white-space: nowrap; font-weight: 600; }
 
 .unit { color: var(--muted); font-weight: 400; font-size: 0.85em; }
 .good { color: var(--good); }
+.warn { color: var(--warn); }
+.maz { color: var(--maz); }
 .bad { color: var(--bad); }
+
+/* ---- Inline info button + hover popover ------------------------------ */
+.info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.05em;
+  height: 1.05em;
+  margin-left: 0.4em;
+  border: 1px solid var(--muted);
+  border-radius: 50%;
+  color: var(--muted);
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 0.72em;
+  line-height: 1;
+  cursor: help;
+  vertical-align: middle;
+  user-select: none;
+}
+.info:hover, .info:focus { color: var(--text); border-color: var(--text); outline: none; }
+.info-pop {
+  position: absolute;
+  bottom: calc(100% + 0.4rem);
+  right: 0.3rem;
+  z-index: 20;
+  width: 15rem;
+  max-width: 70vw;
+  padding: 0.5rem 0.65rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-style: normal;
+  font-weight: 400;
+  white-space: normal;   /* override td.value's nowrap so text wraps in the box */
+  line-height: 1.45;
+  text-align: left;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+.info:hover .info-pop, .info:focus .info-pop { opacity: 1; visibility: visible; }
 
 /* ---- Visibility windows ---------------------------------------------- */
 .windows { margin-top: 0.8rem; }
@@ -244,21 +328,37 @@ td.value { text-align: right; white-space: nowrap; font-weight: 600; }
 .pac-ylab { fill: var(--muted); font-size: 8.5px; text-anchor: end; }
 .pac-xlab { fill: var(--muted); font-size: 8.5px; text-anchor: end; }
 .pac-v3 { fill: none; stroke: var(--accent); stroke-width: 1.3; vector-effect: non-scaling-stroke; }
-.pac-apa { fill: none; stroke: var(--sun); stroke-width: 1.3; vector-effect: non-scaling-stroke; }
+.pac-apa { fill: none; stroke: var(--good); stroke-width: 1.3; vector-effect: non-scaling-stroke; }
+.pac-maz { stroke-dasharray: 3 2.5; }  /* meteoroid unsafe zone: dashed */
+.pac-marg { fill: none; stroke: #6a7382; stroke-width: 1.1; vector-effect: non-scaling-stroke; }  /* marginal: grey, treated unavailable */
 .pac-vline { stroke: var(--text); stroke-width: 0.5; opacity: 0.6; vector-effect: non-scaling-stroke; pointer-events: none; }
 .pac-dot { pointer-events: none; stroke: var(--panel); stroke-width: 0.6; }
 .pac-dot-v3 { fill: var(--accent); }
-.pac-dot-apa { fill: var(--sun); }
+.pac-dot-apa { fill: var(--good); }
 .pac-legend { display: flex; gap: 1rem; font-size: 0.72rem; color: var(--muted); margin-top: 0.3rem; }
 .pac-key::before {
   content: ""; display: inline-block; width: 11px; height: 2px;
   margin-right: 5px; vertical-align: middle;
 }
 .pac-key-v3::before { background: var(--accent); }
-.pac-key-apa::before { background: var(--sun); }
+.pac-key-apa::before { background: var(--good); }
 .win-seg {
   position: absolute; top: 0; bottom: 0;
   background: var(--good);         /* observable (green) */
+}
+.win-seg.marginal {
+  /* near an FOR edge — treated unavailable: grey base + orange (warn) stripes */
+  background:
+    repeating-linear-gradient(45deg, rgba(226, 185, 59, 0.9) 0 2px, transparent 2px 6px),
+    #3a4150;
+}
+.win-seg.maz {
+  /* meteoroid unsafe zone: striped shading over the green (soft constraint) */
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(16, 34, 24, 0.35) 0 2px,
+    transparent 2px 6px
+  );
 }
 .win-tick {
   position: absolute; top: 0; bottom: 0; width: 1px;
@@ -343,6 +443,8 @@ footer a { color: var(--accent); }
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
 }
 #tooltip .unit { color: #b9c2d0; }
+#tooltip .warn { color: var(--warn); }
+#tooltip .maz { color: var(--maz); }
 #tooltip .bad { color: var(--bad); }
 
 /* ---- Small screens: let the panel share space ------------------------ */

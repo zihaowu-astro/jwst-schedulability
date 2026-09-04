@@ -18,7 +18,7 @@ import { createSphere } from "./sphere.js";
 // State
 // ---------------------------------------------------------------------------
 const state = {
-  date: new Date(Date.UTC(2027, 0, 1)), // current observing date (UTC)
+  date: new Date(Date.UTC(2027, 8, 9)), // current observing date (UTC)
   target: null,                          // pinned target {ra, dec} or null
   hover: null,                           // transient hover target {ra, dec}
 };
@@ -46,6 +46,7 @@ const el = {
   targetTitle: document.getElementById("target-title"),
   windows: document.getElementById("windows"),
   tooltip: document.getElementById("tooltip"),
+  sceneHint: document.getElementById("scene-hint"),
 };
 
 // ---------------------------------------------------------------------------
@@ -585,6 +586,13 @@ el.fieldsCheck.addEventListener("change", () => {
 el.mazCheck.addEventListener("change", () => {
   scene.setMAZVisible(el.mazCheck.checked);
 });
+
+// The drag hint has done its job the moment the user starts dragging.
+el.canvas.addEventListener(
+  "pointerdown",
+  () => el.sceneHint.classList.add("dismissed"),
+  { once: true }
+);
 
 // Hide the tooltip when the pointer leaves the canvas.
 el.canvas.addEventListener("pointerleave", () => {

@@ -42,6 +42,24 @@ body {
 }
 #scene canvas { display: block; width: 100%; height: 100%; }
 
+/* Caption across the foot of the 3D view. Fades out for good once the user
+   starts dragging, and never intercepts the gesture it is describing. */
+#scene-hint {
+  position: fixed;
+  bottom: 1.15rem;
+  left: 22rem;                 /* match #scene, so it centres under the globe */
+  width: calc(100vw - 22rem);
+  margin: 0;
+  text-align: center;
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--muted);
+  opacity: 0.8;
+  pointer-events: none;
+  transition: opacity 0.7s ease;
+}
+#scene-hint.dismissed { opacity: 0; }
+
 /* ---- Overlay control + readout panel --------------------------------- */
 #panel {
   position: fixed;
@@ -466,4 +484,5 @@ footer a { color: var(--accent); }
     border-bottom: 1px solid var(--border);
   }
   #scene { position: fixed; left: 0; width: 100vw; z-index: -1; }
+  #scene-hint { display: none; } /* the globe sits behind the panel here */
 }

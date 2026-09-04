@@ -13,6 +13,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { DEG, RAD, FOR_MIN, FOR_MAX, FOR_MARGIN, MAZ_HALF_ANGLE } from "./astro.js";
+import { createJWSTModel } from "./jwst-model.js";
 
 const R = 1; // celestial-sphere radius
 
@@ -42,7 +43,7 @@ export function createSphere(container, callbacks = {}) {
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
   camera.up.set(0, 0, 1);            // north celestial pole (+z) points up
-  camera.position.set(1.9, 2.6, 1.3); // azimuth rotated ~28° so 0h sits further left
+  camera.position.set(2.51, 2.02, 1.3); // azimuth 39°, so the globe starts turned right
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -62,7 +63,41 @@ export function createSphere(container, callbacks = {}) {
   controls.minPolarAngle = lockedPolar;
   controls.maxPolarAngle = lockedPolar;
 
-  scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+  // A small studio environment for the observatory's mirrors. Gold is a metal:
+  // almost all of what you see on it is reflection, so without this the PBR
+  // segments render nearly black and with a plain diffuse material they look
+  // like painted plastic. Three.js applies scene.environment to
+  // MeshStandardMaterial and nothing else, so the flat-shaded rest of the
+  // diagram cannot be affected by it.
+  {
+    const c = document.createElement("canvas");
+    c.width = 128; c.height = 64;
+    const ctx = c.getContext("2d");
+    const g = ctx.createLinearGradient(0, 0, 0, 64);
+    g.addColorStop(0.00, "#ffffff");   // zenith
+    g.addColorStop(0.42, "#e9eef7");
+    g.addColorStop(0.52, "#c3cbd9");   // horizon
+    g.addColorStop(1.00, "#767d8a");   // ground
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, c.width, c.height);
+    const tex = new THREE.CanvasTexture(c);
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromEquirectangular(tex).texture;
+    pmrem.dispose();
+    tex.dispose();
+  }
+
+  // Lighting exists only for the observatory model at the centre — every other
+  // material in the scene is unlit (MeshBasic / LineBasic / Sprite), so these
+  // lights cannot change how anything else looks.
+  scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+  const sunLight = new THREE.DirectionalLight(0xfff3dd, 1.1); // aimed in setSun
+  scene.add(sunLight);
+  // Cool fill that rides with the camera, so whichever side of the observatory
+  // is facing us stays readable even when the Sun is directly behind it.
+  const fillLight = new THREE.DirectionalLight(0xd6e0f2, 0.55);
+  scene.add(fillLight);
 
   // ---- Base sphere: a faint glass globe + the pick surface for hover ------
   const sphereGeom = new THREE.SphereGeometry(R * 0.999, 96, 64);
@@ -417,13 +452,46 @@ export function createSphere(container, callbacks = {}) {
     }
   }
 
+  // ---- The observatory itself ----------------------------------------------
+  // A small JWST at the centre of the sphere, in the attitude the whole diagram
+  // is about: the sunshield held square to the Sun line, with the telescope
+  // standing up behind it. It follows the date, not the cursor.
+  const jwst = createJWSTModel(0.45);
+  scene.add(jwst);
+
+  const _v1 = new THREE.Vector3();
+  const _v2 = new THREE.Vector3();
+  const _v3 = new THREE.Vector3();
+  const _basis = new THREE.Matrix4();
+  const aimQuat = new THREE.Quaternion(); // attitude the model is slewing to
+  let posed = false;                      // snap the first pose, slew after
+
+  // The attitude is fixed by the Sun alone:
+  //   +V3 = straight away from the Sun, so the sunshield normal (-V3) lies
+  //         exactly along the Sun line — the shield is perpendicular to it.
+  //   +V1 = the boresight: of all the directions perpendicular to the Sun, the
+  //         one leaning furthest north, so the telescope points up.
+  //   +V2 = V3 x V1.
+  // Never degenerate: the Sun's declination stays within +/-23.44 deg, so the
+  // Sun line is never parallel to the celestial pole.
+  function updateAim() {
+    _v3.copy(sunDir).multiplyScalar(-1);
+    _v1.set(0, 0, 1).addScaledVector(sunDir, -sunDir.z).normalize();
+    _v2.crossVectors(_v3, _v1);
+    _basis.makeBasis(_v1, _v2, _v3);
+    aimQuat.setFromRotationMatrix(_basis);
+    if (!posed) { jwst.quaternion.copy(aimQuat); posed = true; }
+  }
+
   // ---- Public updates ------------------------------------------------------
   function setSun(ra, dec, ram) {
     sunMarker.position.copy(raDecToVec(ra, dec, R * 1.01));
     sunDir = raDecToVec(ra, dec).normalize();
     ramDir = ram ? raDecToVec(ram.ra, ram.dec).normalize() : null;
+    sunLight.position.copy(sunDir).multiplyScalar(5); // light the model from the Sun
     drawFOR();
     updateFieldColors();
+    updateAim(); // the whole attitude follows the Sun
   }
   function setTarget(ra, dec, observable = true, marginal = false) {
     if (ra == null) { targetMarker.visible = false; return; }
@@ -538,6 +606,12 @@ export function createSphere(container, callbacks = {}) {
 
   renderer.domElement.addEventListener("pointermove", onMove);
   renderer.domElement.addEventListener("click", onClick);
+  // pointermove stops firing once the cursor leaves the canvas, so clear the
+  // hover state explicitly (app.js hides the tooltip on the same event).
+  renderer.domElement.addEventListener("pointerleave", () => {
+    hoverMarker.visible = false;
+    lastHover = null;
+  });
 
   // ---- Resize + render loop ------------------------------------------------
   function resize() {
@@ -583,9 +657,17 @@ export function createSphere(container, callbacks = {}) {
     }
   }
 
+  let lastFrame = performance.now();
   function animate() {
     requestAnimationFrame(animate);
+    const now = performance.now();
+    const dt = Math.min(0.1, (now - lastFrame) / 1000); // clamp after a tab stall
+    lastFrame = now;
     controls.update();
+    fillLight.position.copy(camera.position); // keep the fill on the near side
+    // Ease the observatory into its attitude as the date moves (frame-rate
+    // independent), instead of snapping on every slider step.
+    jwst.quaternion.slerp(aimQuat, 1 - Math.exp(-dt * 9));
     updateLabels();
     renderer.render(scene, camera);
   }

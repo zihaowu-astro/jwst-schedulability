@@ -29,6 +29,7 @@
 </head>
 <body>
   <div id="scene"></div>
+  <p id="scene-hint">Drag to change the viewing angle</p>
 
   <!-- Fallback notice: ES modules + import maps do not load over file:// -->
   <div id="boot-msg" hidden>
@@ -75,11 +76,11 @@
       <h2>Date</h2>
       <label class="field">
         <span>Observing date (UTC)</span>
-        <input id="date-input" type="date" value="2027-01-01" min="2027-01-01" max="2028-12-30" />
+        <input id="date-input" type="date" value="2027-09-09" min="2027-01-01" max="2028-12-30" />
       </label>
       <label class="field">
-        <span>Date <b id="day-label">Jan 1, 2027</b></span>
-        <input id="day-slider" type="range" min="0" max="729" value="0" />
+        <span>Date <b id="day-label">Sep 9, 2027</b></span>
+        <input id="day-slider" type="range" min="0" max="729" value="251" />
       </label>
     </section>
 
